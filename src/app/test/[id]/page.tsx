@@ -1,19 +1,20 @@
 import TestDetailClient from '@/components/test-detail/test-detail-client';
 
 interface TestDetailPageProps {
-  params: {
+  params: Promise<{
     id: string; // This will be URL-encoded, e.g. "My%20Test%7CDesktop%20Chrome"
-  };
+  }>;
 }
 
-export default function TestDetailPage({ params }: TestDetailPageProps) {
+export default async function TestDetailPage({ params }: TestDetailPageProps) {
+  const resolvedParams = await params;
   // The ID from the URL might be URL-encoded (e.g., spaces as %20, | as %7C)
   // The `getTestDetails` fetch call inside TestDetailClient uses encodeURIComponent on this ID again,
   // but fetch usually handles URL encoding of path segments automatically if they are not already.
   // However, passing it decoded is generally safer if the client component expects a raw ID.
   // Here, we will pass it as is, and the client component or API route will handle it.
   // Test IDs are like "Test Title|Project Name"
-  const decodedId = decodeURIComponent(params.id);
+  const decodedId = decodeURIComponent(resolvedParams.id);
 
   return <TestDetailClient testId={decodedId} />;
 }

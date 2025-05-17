@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
 import { getAllTestRunSummaries } from '@/lib/s3-data-service';
-import { TestRunSummary } from '@/types';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -20,10 +20,10 @@ export interface TestDetailsData {
 }
 
 export async function GET(
-  request: Request,
-  { params }: { params: { id: string } }
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const testId = params.id; // id is `${title}|${projectName}`
+  const { id: testId } = await params;
 
   if (!testId) {
     return NextResponse.json({ error: 'Test ID is required' }, { status: 400 });
