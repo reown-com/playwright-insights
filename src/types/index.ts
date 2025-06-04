@@ -30,19 +30,22 @@ export interface TestRunSummary {
 }
 
 export interface FlakyStat {
-  id: string; // `${title}|${projectName}`
+  id: string;
   title: string;
   project: string;
+  trigger: string;
   runs: number;
   failures: number;
-  failureRate: number; // failures / runs, rounded to 2 dp
-  // P = passed, F = failed, S = skipped
-  history: ('P' | 'F' | 'S')[]; // chronological per-run status
-  durationMin?: number; // in milliseconds
-  durationMax?: number; // in milliseconds
-  durationAvg?: number; // in milliseconds, rounded
-  durationP50?: number; // in milliseconds (median)
-  durationP99?: number; // in milliseconds
-  // Optional: store runIds for history to link back to specific run details if needed
-  // historyDetails: { runId: string, status: 'P' | 'F' | 'S', startedAt: Date }[];
+  failureRate: number;
+  history: Array<{
+    runId: string;
+    status: 'passed' | 'failed' | 'skipped';
+    duration?: number;
+  }>;
+  durationStats: {
+    p50: number;
+    p90: number;
+    p95: number;
+    mean: number;
+  };
 } 

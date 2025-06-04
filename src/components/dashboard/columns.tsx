@@ -1,22 +1,22 @@
 'use client'
 
 import { FlakyStat } from '@/types'
-import { ColumnDef } from '@tanstack/react-table'
+import { ColumnDef, Column } from '@tanstack/react-table'
 import { ArrowUpDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import Link from 'next/link'
 import { LineChart, Line, ResponsiveContainer, Tooltip } from 'recharts';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 // Helper for sparkline data
-const getSparklineData = (history: ('P' | 'F' | 'S')[]) => {
-  if (history.length === 0) return [];
-  return history.map((status, index) => ({
+function getSparklineData(history: Array<{ status: 'passed' | 'failed' | 'skipped' }>) {
+  return history.map((item, index) => ({
     name: index.toString(),
-    value: status === 'F' ? 1 : (status === 'P' ? 0 : 0.5), // F=1, P=0, S=0.5 (for visual distinction if needed)
-    statusChar: status,
+    value: item.status === 'failed' ? 1 : (item.status === 'passed' ? 0 : 0.5),
+    statusChar: item.status === 'failed' ? 'F' : (item.status === 'passed' ? 'P' : 'S'),
   }));
-};
+}
 
 // Helper to format duration or show N/A
 const formatDuration = (ms?: number) => ms !== undefined ? `${ms} ms` : 'N/A';
@@ -31,7 +31,17 @@ export const columns: ColumnDef<FlakyStat>[] = [
   },
   {
     accessorKey: 'title',
-    header: 'Title',
+    header: ({ column }) => {
+      return (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          Title
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      )
+    },
     cell: ({ row }) => {
       const title = row.getValue('title') as string
       const id = row.original.id
@@ -45,46 +55,116 @@ export const columns: ColumnDef<FlakyStat>[] = [
   },
   {
     accessorKey: 'project',
-    header: 'Project',
-    cell: ({ row }) => <Badge variant='outline'>{row.getValue('project')}</Badge>,
+    header: ({ column }) => {
+      return (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          Project
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      )
+    },
+    cell: ({ row }) => {
+      return <Badge variant="outline">{row.getValue('project')}</Badge>
+    },
     size: 150,
   },
   {
+    accessorKey: 'trigger',
+    header: ({ column }) => {
+      return (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          Trigger
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      )
+    },
+    cell: ({ row }) => {
+      const trigger = row.getValue('trigger') as string | undefined
+      return trigger ? <Badge variant="secondary">{trigger}</Badge> : null
+    },
+    filterFn: (row, id, value) => {
+      return value === "all" || row.getValue(id) === value
+    },
+    enableColumnFilter: true,
+    meta: {
+      filterComponent: ({ column }: { column: Column<FlakyStat> }) => {
+        return (
+          <Select
+            onValueChange={(value) => column.setFilterValue(value)}
+            defaultValue="all"
+          >
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Select trigger" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Triggers</SelectItem>
+              <SelectItem value="merge-queue">Merge Queue</SelectItem>
+              <SelectItem value="pull-request">Pull Request</SelectItem>
+            </SelectContent>
+          </Select>
+        )
+      },
+    },
+    size: 120,
+  },
+  {
     accessorKey: 'runs',
-    header: () => <div className='text-center'>Runs</div>,
-    cell: ({ row }) => <div className='text-center'>{row.getValue('runs')}</div>,
+    header: ({ column }) => {
+      return (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          Runs
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      )
+    },
+    cell: ({ row }) => {
+      return <div className="text-right">{row.getValue('runs')}</div>
+    },
     size: 60, 
   },
   {
     accessorKey: 'failures',
-    header: ({ column }) => (
-      <Button
-        variant='ghost'
-        onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
-        className='w-full flex items-center justify-center'
-      >
-        Failures
-        <ArrowUpDown className='ml-2 h-4 w-4' />
-      </Button>
-    ),
-    cell: ({ row }) => <div className='text-center'>{row.getValue('failures')}</div>,
+    header: ({ column }) => {
+      return (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          Failures
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      )
+    },
+    cell: ({ row }) => {
+      return <div className="text-right">{row.getValue('failures')}</div>
+    },
     size: 80, 
   },
   {
     accessorKey: 'failureRate',
-    header: ({ column }) => (
-      <Button
-        variant='ghost'
-        onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
-        className='w-full flex items-center justify-center'
-      >
-        Failure Rate
-        <ArrowUpDown className='ml-2 h-4 w-4' />
-      </Button>
-    ),
+    header: ({ column }) => {
+      return (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          Failure Rate
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      )
+    },
     cell: ({ row }) => {
-      const rate = parseFloat(row.getValue('failureRate'))
-      return <div className='text-center font-medium'>{`${(rate * 100).toFixed(0)}%`}</div>
+      const failureRate = row.getValue('failureRate') as number
+      return <div className="text-right">{(failureRate * 100).toFixed(1)}%</div>
     },
     sortingFn: 'alphanumeric',
     size: 100, 
@@ -118,55 +198,27 @@ export const columns: ColumnDef<FlakyStat>[] = [
   },
   // Duration Columns (initially hidden, now sortable)
   {
-    accessorKey: 'durationAvg',
-    header: ({ column }) => (
-      <Button 
-        variant='ghost' 
-        onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
-        className='w-full flex items-center justify-end px-0 hover:bg-transparent' // Adjusted for right alignment
-      >
-        Avg Duration
-        <ArrowUpDown className='ml-2 h-4 w-4' />
-      </Button>
-    ),
-    cell: ({ row }) => <div className='text-right'>{formatDuration(row.getValue('durationAvg'))}</div>,
-    size: 130, // Slightly increased size for sort icon
-    meta: { initiallyHidden: true },
-  },
-  {
-    accessorKey: 'durationMin',
-    header: ({ column }) => (
-      <Button 
-        variant='ghost' 
-        onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
-        className='w-full flex items-center justify-end px-0 hover:bg-transparent'
-      >
-        Min Duration
-        <ArrowUpDown className='ml-2 h-4 w-4' />
-      </Button>
-    ),
-    cell: ({ row }) => <div className='text-right'>{formatDuration(row.getValue('durationMin'))}</div>,
+    accessorKey: 'durationStats.mean',
+    header: ({ column }) => {
+      return (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          Avg Duration
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      )
+    },
+    cell: ({ row }) => {
+      const duration = row.original.durationStats.mean
+      return <div className="text-right">{duration ? `${duration.toFixed(2)}s` : '-'}</div>
+    },
     size: 130,
     meta: { initiallyHidden: true },
   },
   {
-    accessorKey: 'durationMax',
-    header: ({ column }) => (
-      <Button 
-        variant='ghost' 
-        onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
-        className='w-full flex items-center justify-end px-0 hover:bg-transparent'
-      >
-        Max Duration
-        <ArrowUpDown className='ml-2 h-4 w-4' />
-      </Button>
-    ),
-    cell: ({ row }) => <div className='text-right'>{formatDuration(row.getValue('durationMax'))}</div>,
-    size: 130,
-    meta: { initiallyHidden: true },
-  },
-  {
-    accessorKey: 'durationP50',
+    accessorKey: 'durationStats.p50',
     header: ({ column }) => (
       <Button 
         variant='ghost' 
@@ -177,23 +229,39 @@ export const columns: ColumnDef<FlakyStat>[] = [
         <ArrowUpDown className='ml-2 h-4 w-4' />
       </Button>
     ),
-    cell: ({ row }) => <div className='text-right'>{formatDuration(row.getValue('durationP50'))}</div>,
+    cell: ({ row }) => <div className='text-right'>{formatDuration(row.original.durationStats.p50)}</div>,
     size: 130,
     meta: { initiallyHidden: true },
   },
   {
-    accessorKey: 'durationP99',
+    accessorKey: 'durationStats.p90',
     header: ({ column }) => (
       <Button 
         variant='ghost' 
         onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
         className='w-full flex items-center justify-end px-0 hover:bg-transparent'
       >
-        P99 Duration
+        P90 Duration
         <ArrowUpDown className='ml-2 h-4 w-4' />
       </Button>
     ),
-    cell: ({ row }) => <div className='text-right'>{formatDuration(row.getValue('durationP99'))}</div>,
+    cell: ({ row }) => <div className='text-right'>{formatDuration(row.original.durationStats.p90)}</div>,
+    size: 130,
+    meta: { initiallyHidden: true },
+  },
+  {
+    accessorKey: 'durationStats.p95',
+    header: ({ column }) => (
+      <Button 
+        variant='ghost' 
+        onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
+        className='w-full flex items-center justify-end px-0 hover:bg-transparent'
+      >
+        P95 Duration
+        <ArrowUpDown className='ml-2 h-4 w-4' />
+      </Button>
+    ),
+    cell: ({ row }) => <div className='text-right'>{formatDuration(row.original.durationStats.p95)}</div>,
     size: 130,
     meta: { initiallyHidden: true },
   },

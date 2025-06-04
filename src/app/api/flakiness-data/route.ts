@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getAllTestRunSummaries } from '@/lib/s3-data-service';
-// import { calculateFlakinessStats } from '@/lib/flakiness-calculator'; // Calculation moves to client
-import { TestRunSummary } from '@/types';
+import type { NextRequest } from 'next/server';
+import { getTestRunSummaries } from '@/lib/s3-data-service';
+import { calculateFlakinessStats } from '@/lib/flakiness-calculator';
+import { TestRunSummary, FlakyStat } from '@/types';
 
 // Force dynamic rendering and disable caching for this route
 export const dynamic = 'force-dynamic';
@@ -9,41 +10,40 @@ export const revalidate = 0;
 
 export interface FlakinessApiData {
   summaries: TestRunSummary[];
+  flakinessStats: FlakyStat[];
   allTriggers: string[];
   allProjects: string[];
+  year: number;
+  month: number;
+  availableDates: {
+    years: number[];
+    monthsByYear: Record<number, number[]>;
+  };
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const searchParams = request.nextUrl.searchParams;
+  const year = parseInt(searchParams.get('year') || '');
+  const month = parseInt(searchParams.get('month') || '');
+
   try {
-    const allSummaries = await getAllTestRunSummaries(); // These now include the 'trigger' field
-    
-    const uniqueTriggers = new Set<string>();
-    const uniqueProjects = new Set<string>();
+    const summaries = await getTestRunSummaries(year, month);
+    const flakinessStats = calculateFlakinessStats(summaries);
 
-    allSummaries.forEach(summary => {
-      if (summary.trigger) {
-        uniqueTriggers.add(summary.trigger);
-      }
-      summary.tests.forEach(test => {
-        uniqueProjects.add(test.project);
-      });
+    // Get unique triggers and projects from the data
+    const triggers = Array.from(new Set(summaries.map(s => s.trigger).filter(Boolean)));
+    const projects = Array.from(new Set(summaries.flatMap(s => s.tests.map(t => t.project))));
+
+    return NextResponse.json({
+      triggers,
+      projects,
+      flakinessStats,
     });
-
-    const responseData: FlakinessApiData = {
-      summaries: allSummaries,
-      allTriggers: Array.from(uniqueTriggers).sort(),
-      allProjects: Array.from(uniqueProjects).sort(),
-    };
-
-    return NextResponse.json(responseData);
-
   } catch (error) {
-    console.error('Error fetching flakiness API data:', error);
-    // Check if the error is an Error instance to safely access message
-    const errorMessage = error instanceof Error ? error.message : 'Internal server error';
+    console.error('Error fetching flakiness data:', error);
     return NextResponse.json(
-        { error: 'Failed to fetch flakiness API data', details: errorMessage }, 
-        { status: 500 }
+      { error: 'Failed to fetch flakiness data' },
+      { status: 500 }
     );
   }
 } 

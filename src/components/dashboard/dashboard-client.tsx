@@ -1,18 +1,22 @@
 'use client'
 
 import * as React from 'react'
-import { FlakyStat, TestRunSummary } from '@/types'
+import type { FlakyStat } from '@/types/index'
 import { columns } from './columns'
 import { DataTable } from './data-table'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Terminal } from "lucide-react"
 import { ThemeToggle } from '@/components/theme-toggle'
-import { calculateFlakinessStats } from '@/lib/flakiness-calculator' // Import calculator
-import { FlakinessApiData } from '@/app/api/flakiness-data/route' // Import API response type
+import { FlakinessApiData } from '@/app/api/flakiness-data/route'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
-async function getDashboardData(): Promise<FlakinessApiData> {
-  const res = await fetch('/api/flakiness-data', { cache: 'no-store' });
+async function getDashboardData(year?: number, month?: number): Promise<FlakinessApiData> {
+  let url = '/api/flakiness-data';
+  if (year && month) {
+    url += `?year=${year}&month=${month}`;
+  }
+  const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) {
     const errorPayload = await res.json().catch(() => ({}))
     console.error('API Error Response:', errorPayload);
@@ -23,9 +27,19 @@ async function getDashboardData(): Promise<FlakinessApiData> {
 
 const ALL_TRIGGERS_KEY = '__ALL_TRIGGERS__'; // Special key for selecting all triggers
 
+function getYearMonthPairs(availableDates: FlakinessApiData['availableDates']) {
+  const pairs: { year: number; month: number }[] = [];
+  for (const year of availableDates.years) {
+    for (const month of availableDates.monthsByYear[year] || []) {
+      pairs.push({ year, month });
+    }
+  }
+  // Sort descending (most recent first)
+  return pairs.sort((a, b) => b.year !== a.year ? b.year - a.year : b.month - a.month);
+}
+
 export default function DashboardClient() {
-  const [allSummaries, setAllSummaries] = React.useState<TestRunSummary[]>([]);
-  const [flakyStatsForTable, setFlakyStatsForTable] = React.useState<FlakyStat[]>([]);
+  const [allFlakyStats, setAllFlakyStats] = React.useState<FlakyStat[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -35,115 +49,109 @@ export default function DashboardClient() {
   const [allTriggers, setAllTriggers] = React.useState<string[]>([]);
   const [selectedTrigger, setSelectedTrigger] = React.useState<string>(ALL_TRIGGERS_KEY); // Default to all
 
-  React.useEffect(() => {
-    async function loadData() {
-      try {
-        setIsLoading(true);
-        setError(null);
-        const apiData = await getDashboardData();
-        setAllSummaries(apiData.summaries);
-        setAllProjects(apiData.allProjects);
-        setSelectedProjects(apiData.allProjects); // Initially select all projects
-        setAllTriggers(apiData.allTriggers);
-        setSelectedTrigger(ALL_TRIGGERS_KEY); // Default to all triggers
+  const [availableDates, setAvailableDates] = React.useState<FlakinessApiData['availableDates'] | null>(null);
+  const [selectedYearMonth, setSelectedYearMonth] = React.useState<string>('');
 
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'An unknown error occurred');
-        // Ensure table data is empty on error
-        setFlakyStatsForTable([]); 
-        setAllSummaries([]);
-      } finally {
-        setIsLoading(false);
-      }
+  // Fetch data for a specific year/month
+  const fetchData = React.useCallback(async (year?: number, month?: number) => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      const apiData = await getDashboardData(year, month);
+      console.log('API response data:', {
+        triggers: apiData.allTriggers,
+        statsCount: apiData.flakinessStats.length,
+        statsTriggers: [...new Set(apiData.flakinessStats.map(s => s.trigger))],
+      });
+      setAllProjects(apiData.allProjects);
+      setSelectedProjects(apiData.allProjects); // Initially select all projects
+      setAllTriggers(apiData.allTriggers);
+      setSelectedTrigger(ALL_TRIGGERS_KEY); // Default to all triggers
+      setAllFlakyStats(apiData.flakinessStats);
+      setAvailableDates(apiData.availableDates);
+      setSelectedYearMonth(`${apiData.year}-${apiData.month.toString().padStart(2, '0')}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'An unknown error occurred');
+      setAllFlakyStats([]);
+    } finally {
+      setIsLoading(false);
     }
-    loadData();
   }, []);
 
+  // Initial load
   React.useEffect(() => {
-    if (allSummaries.length === 0 && !isLoading) {
-        setFlakyStatsForTable([]);
-        return;
+    fetchData();
+  }, [fetchData]);
+
+  // Filter stats based on selected trigger and project
+  const filteredStats = React.useMemo(() => {
+    let filtered = allFlakyStats;
+
+    if (selectedTrigger) {
+      filtered = filtered.filter(stat => stat.trigger === selectedTrigger);
     }
 
-    let filteredSummaries = allSummaries;
-
-    // 1. Filter by selectedTrigger
-    if (selectedTrigger !== ALL_TRIGGERS_KEY) {
-      filteredSummaries = filteredSummaries.filter(summary => summary.trigger === selectedTrigger);
-    }
-
-    // 2. Filter by selectedProjects
     if (selectedProjects.length > 0 && selectedProjects.length < allProjects.length) {
-        filteredSummaries = filteredSummaries.filter(summary => 
-            summary.tests.some(test => selectedProjects.includes(test.project))
-        );
-        // Important: After filtering summaries by project, we need to ensure tests within those summaries also reflect this project selection.
-        // The calculateFlakinessStats function aggregates based on test.id (`title|project`).
-        // If a summary is included because *one* of its tests matches a selected project,
-        // but that summary also contains tests from *unselected* projects, those tests should ideally not contribute to stats.
-        // For simplicity now, calculateFlakinessStats will process all tests within the filtered summaries.
-        // A more precise approach would be to map/filter `summary.tests` array as well.
-        // However, current `calculateFlakinessStats` takes `TestRunSummary[]` where each `TestRunSummary` is a whole run.
-        // The project filtering logic on `FlakyStat` (done by `data.filter(stat => selectedProjects.includes(stat.project))` previously)
-        // was simpler as it acted on already calculated stats. 
-        // We will apply project filtering to the *final FlakyStat[]* for now, similar to before, for simplicity and correctness of `FlakyStat.project`.
+      filtered = filtered.filter(stat => selectedProjects.includes(stat.project));
     }
 
-    const calculatedStats = calculateFlakinessStats(filteredSummaries);
-    
-    // Post-filter stats by project (if not all projects are selected)
-    let finalStats = calculatedStats;
-    if (selectedProjects.length > 0 && selectedProjects.length < allProjects.length) {
-        finalStats = calculatedStats.filter(stat => selectedProjects.includes(stat.project));
-    }
+    return filtered;
+  }, [allFlakyStats, selectedTrigger, selectedProjects, allProjects]);
 
-    setFlakyStatsForTable(finalStats);
-
-  }, [allSummaries, selectedTrigger, selectedProjects, allProjects, isLoading]);
-
-
-  if (isLoading) {
-    return (
-      <div className="space-y-4">
-        <div className="flex justify-between items-center">
-          <Skeleton className="h-10 w-1/3" />
-          <Skeleton className="h-10 w-24" />
-        </div>
-        <Skeleton className="h-10 w-full" /> {/* Filter bars placeholder*/}
-        <Skeleton className="h-[500px] w-full" /> {/* Table placeholder*/}
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <Alert variant="destructive">
-        <Terminal className="h-4 w-4" />
-        <AlertTitle>Error Fetching Data</AlertTitle>
-        <AlertDescription>{error}</AlertDescription>
-      </Alert>
-    );
-  }
+  // Handle year/month change
+  const handleYearMonthChange = (value: string) => {
+    setSelectedYearMonth(value);
+    const [year, month] = value.split('-').map(Number);
+    fetchData(year, month);
+  };
 
   return (
     <div className="space-y-4">
-        <div className="flex justify-between items-center mb-6">
-            <h1 className='text-3xl font-bold'>Flakiest Playwright Tests</h1>
-            <ThemeToggle />
+      <div className="flex justify-between items-center mb-6">
+        <h1 className='text-3xl font-bold'>Flakiest Playwright Tests</h1>
+        <ThemeToggle />
+      </div>
+      {availableDates && (
+        <div className="mb-4 flex items-center gap-4">
+          <Select value={selectedYearMonth} onValueChange={handleYearMonthChange}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Select date" />
+            </SelectTrigger>
+            <SelectContent>
+              {getYearMonthPairs(availableDates).map(({ year, month }) => (
+                <SelectItem key={`${year}-${month}`} value={`${year}-${month.toString().padStart(2, '0')}`}>{`${year}-${month.toString().padStart(2, '0')}`}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-      
-      <DataTable 
-        columns={columns} 
-        data={flakyStatsForTable} 
-        searchColumnId='title'
-        allProjects={allProjects}
-        selectedProjects={selectedProjects}
-        onProjectFilterChange={setSelectedProjects}
-        allTriggers={allTriggers}
-        selectedTrigger={selectedTrigger}
-        onTriggerFilterChange={setSelectedTrigger}
-        allTriggersKey={ALL_TRIGGERS_KEY}
-      />
+      )}
+      {isLoading ? (
+        <div className="space-y-4">
+          <Skeleton className="h-10 w-1/3" />
+          <Skeleton className="h-10 w-24" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-[500px] w-full" />
+        </div>
+      ) : error ? (
+        <Alert variant="destructive">
+          <Terminal className="h-4 w-4" />
+          <AlertTitle>Error Fetching Data</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : (
+        <DataTable 
+          columns={columns} 
+          data={filteredStats} 
+          searchColumnId='title'
+          allProjects={allProjects}
+          selectedProjects={selectedProjects}
+          onProjectFilterChange={setSelectedProjects}
+          allTriggers={allTriggers}
+          selectedTrigger={selectedTrigger}
+          onTriggerFilterChange={setSelectedTrigger}
+          allTriggersKey={ALL_TRIGGERS_KEY}
+        />
+      )}
     </div>
   );
 } 

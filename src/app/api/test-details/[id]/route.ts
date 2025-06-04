@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { getAllTestRunSummaries } from '@/lib/s3-data-service';
+import { getTestRunSummaries, getAvailableDates } from '@/lib/s3-data-service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -30,7 +30,16 @@ export async function GET(
   }
 
   try {
-    const allRuns = await getAllTestRunSummaries(); // Uses cache
+    // Get the most recent year and month
+    const { years, monthsByYear } = await getAvailableDates();
+    const mostRecentYear = years[0];
+    const mostRecentMonth = monthsByYear[mostRecentYear]?.[0];
+    
+    if (!mostRecentYear || !mostRecentMonth) {
+      return NextResponse.json({ error: 'No data available' }, { status: 404 });
+    }
+
+    const allRuns = await getTestRunSummaries(mostRecentYear, mostRecentMonth);
     
     let testTitle = '';
     let testProject = '';

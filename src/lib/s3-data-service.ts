@@ -1,6 +1,5 @@
 import { S3Client, ListObjectsV2Command, GetObjectCommand } from '@aws-sdk/client-s3';
-import { Readable } from 'stream';
-import { TestRun, TestRunSummary } from '@/types';
+import { TestRunSummary } from '@/types';
 
 const S3_BUCKET = process.env.S3_BUCKET!;
 const S3_PREFIX = process.env.S3_PREFIX!.endsWith('/') ? process.env.S3_PREFIX!.slice(0, -1) : process.env.S3_PREFIX!;
@@ -20,16 +19,36 @@ const s3Client = new S3Client({
   },
 });
 
-async function streamToString(stream: Readable): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Uint8Array[] = [];
-    stream.on('data', (chunk) => chunks.push(chunk));
-    stream.on('error', reject);
-    stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
-  });
+interface PlaywrightTest {
+  id?: string;
+  testId?: string;
+  title: string;
+  project: string;
+  status?: string;
+  duration?: number;
+  results?: Array<{
+    status?: string;
+    duration?: number;
+  }>;
 }
 
-export function transformPlaywrightReportToTestRunSummary(report: TestRun, s3Key: string): TestRunSummary {
+interface PlaywrightSuite {
+  title: string;
+  specs: Array<{
+    title: string;
+    tests: PlaywrightTest[];
+  }>;
+}
+
+interface PlaywrightReport {
+  runId?: string;
+  startedAt?: string;
+  startTime?: string;
+  tests?: PlaywrightTest[];
+  suites?: PlaywrightSuite[];
+}
+
+export function transformPlaywrightReportToTestRunSummary(report: PlaywrightReport, s3Key: string): TestRunSummary {
   const runId = s3Key.substring(s3Key.lastIndexOf('/') + 1).replace('.json', '');
   let earliestStartDate: Date | null = null;
   const tests: TestRunSummary['tests'] = [];
@@ -51,9 +70,9 @@ export function transformPlaywrightReportToTestRunSummary(report: TestRun, s3Key
           // Use the first result for a given test spec + project combination for simplicity
           // Playwright can have multiple results for a single test (e.g. retries)
           // We'll consider the first one as representative for this summary.
-          const mainResult = test.results[0];
+          const mainResult = test.results?.[0];
           if (mainResult) {
-            const resultStartTime = new Date(mainResult.startTime);
+            const resultStartTime = new Date(report.startedAt || report.startTime || new Date().toISOString());
             if (earliestStartDate === null || resultStartTime < earliestStartDate) {
               earliestStartDate = resultStartTime;
             }
@@ -68,9 +87,9 @@ export function transformPlaywrightReportToTestRunSummary(report: TestRun, s3Key
             }
 
             tests.push({
-              id: `${spec.title}|${test.projectName}`,
+              id: `${spec.title}|${test.project}`,
               title: `${suite.title} > ${spec.title}`,
-              project: test.projectName,
+              project: test.project,
               status: status,
               duration: mainResult.duration,
             });
@@ -88,56 +107,163 @@ export function transformPlaywrightReportToTestRunSummary(report: TestRun, s3Key
   };
 }
 
-// Simple in-memory cache with a Map
-const cache = new Map<string, { data: TestRunSummary[]; timestamp: number }>();
-const CACHE_DURATION_MS = 10 * 60 * 1000; // 10 minutes
+interface AvailableDates {
+  years: number[];
+  monthsByYear: Record<number, number[]>;
+}
 
-export async function getAllTestRunSummaries(): Promise<TestRunSummary[]> {
-  const cacheKey = 'allTestRunSummaries';
-  const cachedEntry = cache.get(cacheKey);
-
-  if (cachedEntry && (Date.now() - cachedEntry.timestamp < CACHE_DURATION_MS)) {
-    console.log('Returning cached data');
-    return cachedEntry.data;
-  }
-  console.log('Fetching fresh data from S3');
-
-  const listObjectsParams = {
+export async function getAvailableDates(): Promise<AvailableDates> {
+  const command = new ListObjectsV2Command({
     Bucket: S3_BUCKET,
-    Prefix: `${S3_PREFIX}/`, // Ensure prefix ends with a slash for folder-like behavior
-  };
+    Prefix: S3_PREFIX + '/',
+    Delimiter: '/',
+  });
 
-  const listedObjects = await s3Client.send(new ListObjectsV2Command(listObjectsParams));
-  const jsonFiles = listedObjects.Contents?.filter(obj => obj.Key?.endsWith('.json')) || [];
+  const response = await s3Client.send(command);
+  const years: number[] = [];
+  const monthsByYear: Record<number, number[]> = {};
 
-  const summaries: TestRunSummary[] = [];
-
-  for (const file of jsonFiles) {
-    if (file.Key) {
-      try {
-        const getObjectParams = {
-          Bucket: S3_BUCKET,
-          Key: file.Key,
-        };
-        const objectData = await s3Client.send(new GetObjectCommand(getObjectParams));
-        if (objectData.Body) {
-          const rawJsonString = await streamToString(objectData.Body as Readable);
-          const report = JSON.parse(rawJsonString) as TestRun;
-          summaries.push(transformPlaywrightReportToTestRunSummary(report, file.Key));
-        } else {
-          console.warn(`Skipping empty file: ${file.Key}`);
+  // Process CommonPrefixes to get years
+  if (response.CommonPrefixes) {
+    for (const prefix of response.CommonPrefixes) {
+      if (prefix.Prefix) {
+        const yearMatch = prefix.Prefix.match(/year=(\d{4})\//);
+        if (yearMatch) {
+          const year = parseInt(yearMatch[1]);
+          years.push(year);
+          monthsByYear[year] = [];
         }
-      } catch (error) {
-        console.error(`Error processing file ${file.Key}:`, error);
-        // Optionally, decide if one failed file should stop the whole process
-        // or just skip this file and continue.
       }
     }
   }
 
-  // Sort summaries by startedAt date, most recent first
-  summaries.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
+  // For each year, get its months
+  for (const year of years) {
+    const monthCommand = new ListObjectsV2Command({
+      Bucket: S3_BUCKET,
+      Prefix: `${S3_PREFIX}/year=${year}/`,
+      Delimiter: '/',
+    });
 
-  cache.set(cacheKey, { data: summaries, timestamp: Date.now() });
+    const monthResponse = await s3Client.send(monthCommand);
+    if (monthResponse.CommonPrefixes) {
+      for (const prefix of monthResponse.CommonPrefixes) {
+        if (prefix.Prefix) {
+          const monthMatch = prefix.Prefix.match(/month=(\d{2})\//);
+          if (monthMatch) {
+            const month = parseInt(monthMatch[1]);
+            monthsByYear[year].push(month);
+          }
+        }
+      }
+    }
+  }
+
+  // Sort years and months
+  years.sort((a, b) => b - a); // Descending order
+  Object.keys(monthsByYear).forEach(year => {
+    monthsByYear[parseInt(year)].sort((a, b) => b - a); // Descending order
+  });
+
+  return { years, monthsByYear };
+}
+
+export async function getTestRunSummaries(year: number, month: number): Promise<TestRunSummary[]> {
+  const prefix = `${S3_PREFIX}/year=${year}/month=${month.toString().padStart(2, '0')}/`;
+
+  const command = new ListObjectsV2Command({
+    Bucket: S3_BUCKET,
+    Prefix: prefix,
+  });
+
+  const response = await s3Client.send(command);
+  const summaries: TestRunSummary[] = [];
+
+  if (!response.Contents) {
+    return [];
+  }
+
+  for (const item of response.Contents) {
+    if (!item.Key) continue;
+
+    try {
+      const keyWithoutPrefix = item.Key.startsWith(S3_PREFIX + '/') ? item.Key.substring(S3_PREFIX.length + 1) : item.Key;
+      const parts = keyWithoutPrefix.split('/');
+
+      const getObjectCommand = new GetObjectCommand({
+        Bucket: S3_BUCKET,
+        Key: item.Key,
+      });
+
+      const response = await s3Client.send(getObjectCommand);
+      const stream = response.Body;
+      if (!stream) {
+        continue;
+      }
+
+      const content = await stream.transformToString();
+      const data = JSON.parse(content) as PlaywrightReport;
+
+      // Extract trigger from the path - look for it after the date segments
+      let trigger: string | undefined;
+      
+      // Skip the date segments (year=YYYY, month=MM, day=DD) and get the next part
+      const dateSegmentCount = 3; // year, month, day
+      if (parts.length > dateSegmentCount) {
+        trigger = parts[dateSegmentCount];
+      }
+
+      // Handle both original Playwright report format and our simplified format
+      let tests: PlaywrightTest[] = [];
+      
+      if (data.tests) {
+        tests = data.tests;
+      } else if (data.suites) {
+        tests = data.suites.flatMap(suite => 
+          suite.specs.flatMap(spec => 
+            spec.tests.map(test => ({
+              ...test,
+              title: `${suite.title} > ${spec.title}`,
+            }))
+          )
+        );
+      }
+      
+      if (tests.length > 0) {
+        const summary: TestRunSummary = {
+          runId: data.runId || item.Key,
+          startedAt: new Date(data.startedAt || data.startTime || new Date().toISOString()),
+          trigger,
+          tests: tests.map(test => ({
+            id: test.id || test.testId || `${test.title}-${test.project}`,
+            title: test.title,
+            project: test.project,
+            status: (test.status || test.results?.[0]?.status || 'skipped') as 'skipped' | 'passed' | 'failed',
+            duration: test.duration || test.results?.[0]?.duration,
+          })),
+        };
+        summaries.push(summary);
+      }
+    } catch {
+      // Skip files that can't be processed
+      continue;
+    }
+  }
+
   return summaries;
+}
+
+export async function getAllTestRunSummaries(): Promise<TestRunSummary[]> {
+  const { years, monthsByYear } = await getAvailableDates();
+  
+  // Get the most recent year and month
+  const mostRecentYear = years[0];
+  const mostRecentMonth = monthsByYear[mostRecentYear]?.[0];
+  
+  if (!mostRecentYear || !mostRecentMonth) {
+    console.log('No data available');
+    return [];
+  }
+
+  return getTestRunSummaries(mostRecentYear, mostRecentMonth);
 } 
