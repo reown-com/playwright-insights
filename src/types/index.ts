@@ -26,6 +26,8 @@ export interface TestRunSummary {
     project: string; // value of projectName
     status: 'passed' | 'failed' | 'skipped';
     duration?: number; // duration from playwright result if available
+    stdout?: string[];
+    errors?: string[];
   }[];
 }
 

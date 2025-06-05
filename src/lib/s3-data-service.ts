@@ -29,6 +29,8 @@ interface PlaywrightTest {
   results?: Array<{
     status?: string;
     duration?: number;
+    stdout?: string[];
+    errors?: string[];
   }>;
 }
 
@@ -92,6 +94,8 @@ export function transformPlaywrightReportToTestRunSummary(report: PlaywrightRepo
               project: test.project,
               status: status,
               duration: mainResult.duration,
+              stdout: Array.isArray(mainResult.stdout) ? mainResult.stdout : undefined,
+              errors: Array.isArray(mainResult.errors) ? mainResult.errors : undefined,
             });
           }
         });
@@ -234,13 +238,19 @@ export async function getTestRunSummaries(year: number, month: number): Promise<
           runId: data.runId || item.Key,
           startedAt: new Date(data.startedAt || data.startTime || new Date().toISOString()),
           trigger,
-          tests: tests.map(test => ({
-            id: test.id || test.testId || `${test.title}-${test.project}`,
-            title: test.title,
-            project: test.project,
-            status: (test.status || test.results?.[0]?.status || 'skipped') as 'skipped' | 'passed' | 'failed',
-            duration: test.duration || test.results?.[0]?.duration,
-          })),
+          tests: tests.map(test => {
+            const mainResult = test.results?.[0];
+            const base = {
+              id: test.id || test.testId || `${test.title}-${test.project}`,
+              title: test.title,
+              project: test.project,
+              status: (test.status || mainResult?.status || 'skipped') as 'skipped' | 'passed' | 'failed',
+              duration: test.duration || mainResult?.duration,
+              stdout: mainResult?.stdout?.map(item => typeof item === 'object' ? JSON.stringify(item) : String(item)),
+              errors: mainResult?.errors?.map(item => typeof item === 'object' ? JSON.stringify(item) : String(item)),
+            };
+            return base;
+          }),
         };
         summaries.push(summary);
       }

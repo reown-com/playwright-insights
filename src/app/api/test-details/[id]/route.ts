@@ -10,6 +10,8 @@ interface TestHistoryEntry {
   startedAt: string; // ISO string
   status: 'passed' | 'failed' | 'skipped';
   duration?: number;
+  stdout?: string[];
+  errors?: string[];
 }
 
 export interface TestDetailsData {
@@ -59,6 +61,8 @@ export async function GET(
           startedAt: run.startedAt.toISOString(),
           status: testInstance.status,
           duration: testInstance.duration,
+          stdout: testInstance.stdout,
+          errors: testInstance.errors,
         });
       }
     }

@@ -38,6 +38,7 @@ export default function TestDetailClient({ testId }: TestDetailClientProps) {
   const [data, setData] = React.useState<TestDetailsData | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [expandedRun, setExpandedRun] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     async function loadData() {
@@ -135,14 +136,46 @@ export default function TestDetailClient({ testId }: TestDetailClientProps) {
             </TableHeader>
             <TableBody>
                 {data.history.length > 0 ? data.history.map((run) => (
-                <TableRow key={run.runId}>
-                    <TableCell className="font-medium truncate" title={run.runId}>{run.runId}</TableCell>
+                <React.Fragment key={run.runId}>
+                  <TableRow>
+                    <TableCell className="font-medium truncate" title={run.runId}>
+                      <button
+                        className="text-left w-full hover:underline focus:outline-none"
+                        onClick={() => setExpandedRun(expandedRun === run.runId ? null : run.runId)}
+                        aria-expanded={expandedRun === run.runId}
+                        aria-controls={`run-details-${run.runId}`}
+                      >
+                        {run.runId}
+                        {((run.stdout && run.stdout.length > 0) || (run.errors && run.errors.length > 0)) && (
+                          <span className="ml-2 text-xs text-blue-400">[details]</span>
+                        )}
+                      </button>
+                    </TableCell>
                     <TableCell>{format(new Date(run.startedAt), 'PPP p')}</TableCell>
                     <TableCell>{getStatusBadge(run.status)}</TableCell>
                     <TableCell className="text-right">
                     {run.duration !== undefined ? `${run.duration} ms` : 'N/A'}
                     </TableCell>
-                </TableRow>
+                  </TableRow>
+                  {expandedRun === run.runId && ((run.stdout && run.stdout.length > 0) || (run.errors && run.errors.length > 0)) && (
+                    <TableRow>
+                      <TableCell colSpan={4} id={`run-details-${run.runId}`} className="bg-muted/40">
+                        {run.stdout && run.stdout.length > 0 && (
+                          <div className="mb-2">
+                            <div className="font-semibold mb-1">Stdout:</div>
+                            <pre className="bg-black text-white rounded p-2 overflow-x-auto text-xs max-h-48">{run.stdout.join('\n')}</pre>
+                          </div>
+                        )}
+                        {run.errors && run.errors.length > 0 && (
+                          <div>
+                            <div className="font-semibold mb-1 text-red-500">Errors:</div>
+                            <pre className="bg-black text-red-200 rounded p-2 overflow-x-auto text-xs max-h-48">{run.errors.join('\n')}</pre>
+                          </div>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </React.Fragment>
                 )) : (
                     <TableRow>
                         <TableCell colSpan={4} className="h-24 text-center">
