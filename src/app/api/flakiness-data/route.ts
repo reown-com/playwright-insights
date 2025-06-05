@@ -23,8 +23,20 @@ export interface FlakinessApiData {
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
-  const year = parseInt(searchParams.get('year') || '');
-  const month = parseInt(searchParams.get('month') || '');
+  const yearParam = searchParams.get('year');
+  const monthParam = searchParams.get('month');
+  
+  // If no year/month provided, use current date
+  const now = new Date();
+  const year = yearParam ? parseInt(yearParam) : now.getFullYear();
+  const month = monthParam ? parseInt(monthParam) : now.getMonth() + 1; // getMonth() returns 0-11
+
+  if (isNaN(year) || isNaN(month)) {
+    return NextResponse.json(
+      { error: 'Invalid year or month parameter' },
+      { status: 400 }
+    );
+  }
 
   try {
     const summaries = await getTestRunSummaries(year, month);
@@ -34,15 +46,28 @@ export async function GET(request: NextRequest) {
     const triggers = Array.from(new Set(summaries.map(s => s.trigger).filter(Boolean)));
     const projects = Array.from(new Set(summaries.flatMap(s => s.tests.map(t => t.project))));
 
-    return NextResponse.json({
-      triggers,
-      projects,
+    // Get available dates
+    const availableDates = {
+      years: [year], // For now, just include the current year
+      monthsByYear: {
+        [year]: [month] // For now, just include the current month
+      }
+    };
+
+    const response = {
+      summaries,
       flakinessStats,
-    });
+      allTriggers: triggers,
+      allProjects: projects,
+      year,
+      month,
+      availableDates
+    };
+
+    return NextResponse.json(response);
   } catch (error) {
-    console.error('Error fetching flakiness data:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch flakiness data' },
+      { error: 'Failed to fetch flakiness data', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     );
   }

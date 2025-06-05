@@ -19,10 +19,16 @@ async function getDashboardData(year?: number, month?: number): Promise<Flakines
   const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) {
     const errorPayload = await res.json().catch(() => ({}))
-    console.error('API Error Response:', errorPayload);
     throw new Error(`Failed to fetch data: ${res.statusText} - ${errorPayload.details || 'Unknown error'}`);
   }
-  return res.json();
+  const data = await res.json();
+  
+  // Validate required fields
+  if (!data.flakinessStats || !data.allTriggers || !data.allProjects || !data.year || !data.month || !data.availableDates) {
+    throw new Error('API response missing required fields');
+  }
+  
+  return data;
 }
 
 const ALL_TRIGGERS_KEY = '__ALL_TRIGGERS__'; // Special key for selecting all triggers
@@ -58,18 +64,15 @@ export default function DashboardClient() {
       setIsLoading(true);
       setError(null);
       const apiData = await getDashboardData(year, month);
-      console.log('API response data:', {
-        triggers: apiData.allTriggers,
-        statsCount: apiData.flakinessStats.length,
-        statsTriggers: [...new Set(apiData.flakinessStats.map(s => s.trigger))],
-      });
       setAllProjects(apiData.allProjects);
       setSelectedProjects(apiData.allProjects); // Initially select all projects
       setAllTriggers(apiData.allTriggers);
       setSelectedTrigger(ALL_TRIGGERS_KEY); // Default to all triggers
       setAllFlakyStats(apiData.flakinessStats);
       setAvailableDates(apiData.availableDates);
-      setSelectedYearMonth(`${apiData.year}-${apiData.month.toString().padStart(2, '0')}`);
+      if (apiData.year && apiData.month) {
+        setSelectedYearMonth(`${apiData.year}-${apiData.month.toString().padStart(2, '0')}`);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'An unknown error occurred');
       setAllFlakyStats([]);
@@ -87,11 +90,11 @@ export default function DashboardClient() {
   const filteredStats = React.useMemo(() => {
     let filtered = allFlakyStats;
 
-    if (selectedTrigger) {
+    if (selectedTrigger && selectedTrigger !== ALL_TRIGGERS_KEY) {
       filtered = filtered.filter(stat => stat.trigger === selectedTrigger);
     }
 
-    if (selectedProjects.length > 0 && selectedProjects.length < allProjects.length) {
+    if (selectedProjects?.length > 0 && selectedProjects?.length < allProjects?.length) {
       filtered = filtered.filter(stat => selectedProjects.includes(stat.project));
     }
 
